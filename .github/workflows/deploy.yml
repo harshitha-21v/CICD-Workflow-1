@@ -30,15 +30,16 @@ jobs:
         mvn clean package
 
     - name: SonarCloud Scan 
-      env:
-        sonar_token: ${{secrets.sonar-token }}
+      env:     
+       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}   
+      run: |    
       
-      run: |
-         mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
-         -Dsonar.token="$secrets.sonar-token" \
-         -Dsonar.organization=harshitha-21v \ 
-         -Dsonar.projectKey=harshitha-21v_CICD-Workflow-1 \ 
-         -Dsonar.host.url=https://sonarcloud.io
+       mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:5.7.0.6970:sonar \  
+       -Dsonar.token="$SONAR_TOKEN" \      
+       -Dsonar.organization=harshitha-21v \       
+       -Dsonar.projectKey=harshitha-21v_CICD-Workflow-1 \       
+       -Dsonar.host.url=https://sonarcloud.io
+
          
 
     - name: Upload WAR Artifact
