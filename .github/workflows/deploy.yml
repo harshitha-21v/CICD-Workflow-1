@@ -215,7 +215,8 @@ jobs:
     - name: Display Application URL
       env:
        PUBLIC_IP: ${{ env.PUBLIC_IP }}
+       APP_PROTOCOL: http
       run: |
 
         echo "Application is deployed successfully"
-        echo "Application URL: http://${{ env.PUBLIC_IP }}:8080/assignment1-harshitha"
+        echo "Application URL: ${{ env.APP_PROTOCOL }}://${{ env.PUBLIC_IP }}:8080/assignment1-harshitha"
