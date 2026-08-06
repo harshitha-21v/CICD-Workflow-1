@@ -1,0 +1,220 @@
+name: Java Web Application CI-CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+
+# CI - BUILD + SONAR SCAN
+
+  build:
+  
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Setup Java 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+        cache: maven
+
+    - name: Build WAR File
+      run: |
+        mvn clean package
+
+    - name: SonarCloud Scan 
+      env:
+        SONAR_TOKEN: ${{secrets.SONAR_TOKEN }}
+      run: |
+         mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+         -Dsonar.token="$secrets.SONAR_TOKEN" \
+         -Dsonar.organization=harshitha-21v \ 
+         -Dsonar.projectKey=harshitha-21v_CICD-Workflow-1 \ 
+         -Dsonar.host.url=https://sonarcloud.io
+         
+
+    - name: Upload WAR Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: application-war
+        path: target/*.war
+
+
+# CD - AWS configuration
+
+  deploy:
+
+    needs: build
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: Download WAR
+      uses: actions/download-artifact@v4
+      with:
+        name: application-war
+
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-south-2
+
+# Check if EC2 is present
+
+    - name: Check EC2 Instance
+
+      run: |
+
+        INSTANCE_ID=$(aws ec2 describe-instances \
+        --filters "Name=tag:Name,Values=Tomcat-server1" \
+        "Name=instance-state-name,Values=running" \
+        --query "Reservations[*].Instances[*].InstanceId" \
+        --output text)
+
+        echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
+
+        echo "Existing Instance: $INSTANCE_ID"
+
+# Create EC2 if not available
+
+    - name: Create RedHat EC2
+      if: env.INSTANCE_ID == ''
+      run: |
+
+        INSTANCE_ID=$(aws ec2 run-instances \
+        --image-id ami-02e3c96eaee2fe306 \
+        --instance-type t3.micro \
+        --key-name key-1 \
+        --security-group-ids sg-05232a653e5e623fa \
+        --tag-specifications \
+        'ResourceType=instance,Tags=[{Key=Name,Value=Tomcat-server1}]' \
+        --query 'Instances[0].InstanceId' \
+        --output text)
+
+        echo "Created EC2: $INSTANCE_ID"
+
+        echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
+        
+# Wait for instance to create
+
+    - name: Wait for EC2
+      run: |
+          sleep 60
+
+#  EC2- cReation
+
+    - name: Get EC2 Public IP
+      run: |
+
+        PUBLIC_IP=$(aws ec2 describe-instances \
+        --filters "Name=tag:Name,Values=Tomcat-server1" \
+        "Name=instance-state-name,Values=running" \
+        --query "Reservations[*].Instances[*].PublicIpAddress" \
+        --output text)
+
+        echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
+
+        echo "Server IP: $PUBLIC_IP"
+        
+    - name: Configure SSH Key
+      run: |
+      
+        echo "${{ secrets.EC2_SSH_KEY }}" > ec2-key.pem
+        chmod 600 ec2-key.pem
+
+
+# Deploying WAR file to Tomcat
+
+    - name: Install Java 21 and Tomcat
+      run: |
+
+       ssh -i ec2-key.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PUBLIC_IP }} << 'EOF'
+
+       sudo dnf update -y
+
+       sudo dnf install -y java-21-openjdk java-21-openjdk-devel
+
+       java -version
+
+       sudo dnf install -y wget
+
+       cd /opt
+
+       sudo wget https://archive.apache.org/dist/tomcat/tomcat-9/v9.0.109/bin/apache-tomcat-9.0.109.tar.gz
+
+       ls -l /opt
+
+       sudo tar -xzf apache-tomcat-9.0.109.tar.gz
+
+       ls -l /opt
+
+       sudo mv apache-tomcat-9.0.109 tomcat
+
+       ls -l /opt
+       
+       sudo chown -R ec2-user:ec2-user /opt/tomcat
+       
+       sudo chmod +x /opt/tomcat/bin/*.sh
+
+       cd /opt/tomcat/bin
+
+       sudo ./startup.sh
+
+       ps -ef | grep tomcat
+
+       sudo yum install -y firewalld
+
+       sudo systemctl start firewalld
+
+       sudo systemctl enable firewalld
+
+       sudo firewall-cmd --permanent --add-port=8080/tcp
+
+       sudo firewall-cmd --reload
+
+       sudo firewall-cmd --list-ports
+
+       ls -l /opt/tomcat/webapps
+
+       EOF
+    
+    - name: Deploy WAR File
+      run: |
+
+        scp -i ec2-key.pem -o StrictHostKeyChecking=no \
+        *.war \
+        ec2-user@${{ env.PUBLIC_IP }}:/opt/tomcat/webapps/
+
+
+    - name: Restart Tomcat
+      run: |
+
+        ssh -i ec2-key.pem -o StrictHostKeyChecking=no ec2-user@${{ env.PUBLIC_IP }} << EOF
+        sudo chown -R ec2-user:ec2-user /opt/tomcat
+        /opt/tomcat/bin/shutdown.sh || true
+        sleep 10
+        /opt/tomcat/bin/startup.sh
+        sleep 10
+        EOF
+
+# Display Application URL
+
+    - name: Display Application URL
+      run: |
+
+        echo "Application is deployed successfully"
+        echo "Application URL: http://${{ env.PUBLIC_IP }}:8080/assignment1-harshitha"
